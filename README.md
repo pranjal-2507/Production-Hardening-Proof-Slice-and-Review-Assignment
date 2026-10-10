@@ -40,18 +40,29 @@ The breaker must:
 - increment `metrics.breaker_open_total` on every trip and call `onStateChange(state)` on every
   transition.
 
-## What to submit
+## Submission Details
 
-Open a pull request on a branch named `production-hardening-slice`, and in your README include these
-labelled sections:
+### 1. Risk addressed
+Prevents cascading failure, thread/socket exhaustion, and caller pile-ups when PromptPilot's external model provider suffers latency spikes or total downtime.
 
-1. **Risk addressed**
-2. **Chosen control**
-3. **How to run / test**
-4. **Evidence** (a reviewer can confirm it works without reading all your code)
-5. **Observability note** (which metric moves and which state changes are logged)
-6. **Trade-off**
-7. **Remaining risk**
-8. **How this production control protects my Modules 1–3 design**
+### 2. Chosen control
+Implemented a stateful circuit breaker (`CLOSED`, `OPEN`, `HALF_OPEN`) with configurable failure thresholds, recovery timeout, single-probe concurrency limits, and fast fallback in [`src/circuitBreaker.js`](./src/circuitBreaker.js) protecting [`src/replyService.js`](./src/replyService.js).
 
-Submit the pull-request URL.
+### 3. How to run / test
+Run `node --test` or `npm test`. Expected result: 19 tests pass (0 failures) across unit and hardening test suites in < 250ms.
+
+### 4. Evidence
+Supplied tests in [`test/circuitBreaker.test.js`](./test/circuitBreaker.test.js) and [`test/replyService.test.js`](./test/replyService.test.js) prove state transitions and human fallback; hardening tests in [`test/circuitBreakerHardening.test.js`](./test/circuitBreakerHardening.test.js) verify concurrent probe limits, recovery, and test isolation.
+
+### 5. Observability note
+Increments `metrics.breaker_open_total` and `metrics.short_circuited_total`; emits structured JSON logs for `circuit_breaker_state_change` and `circuit_breaker_rejected` with breaker name, states, and counters without logging sensitive ticket or prompt payloads.
+
+### 6. Trade-off
+Adds small function invocation wrapping overhead and temporarily rejects calls to human fallback during the `openMillis` cooldown even if the upstream provider briefly recovers before the probe window.
+
+### 7. Remaining risk
+Does not resolve underlying upstream model provider outages, rate limits, or semantic quality defects; does not eliminate human support queue congestion if the provider outage is prolonged.
+
+### 8. How this production control protects my Modules 1–3 design
+Protects PromptPilot's core architecture where automated ticket drafting depends on an external LLM, preserving critical-path service availability by failing fast to the human fallback queue (`FALLBACK_TEXT`) rather than exhausting system resources.
+
